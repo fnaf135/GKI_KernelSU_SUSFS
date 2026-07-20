@@ -381,11 +381,10 @@ jobs:
         echo " Preparing Android fair.c compatibility shim"
         echo "========================================"
 
-        # Android 16's 6.12 tree uses a 0.75 ms / 750000 ns fallback and
-        # exports sysctl_sched_base_slice. The upstream BORE 6.12.37 patch
-        # expects the upstream 0.70 ms / 700000 ns layout without that export.
-        # Normalize only this small block so the BORE hunk can apply, then
-        # restore Android's fallback and symbol export immediately afterward.
+        # Android 16's 6.12 tree uses a 0.75 ms / 750000 ns fallback.
+        # The upstream BORE patch expects 0.70 ms / 700000 ns. WildKernel's
+        # Remove Protected Exports step may already have removed the export
+        # line, so treat it as optional rather than requiring an exact block.
         python3 - <<'PY'
         from pathlib import Path
         import re
@@ -398,33 +397,68 @@ jobs:
             print("BORE tunable block is already present; compatibility shim is unnecessary.")
             raise SystemExit(0)
 
-        comment_old = " * (default: 0.75 msec * (1 + ilog(ncpus)), units: nanoseconds)"
-        comment_new = " * (default: 0.70 msec * (1 + ilog(ncpus)), units: nanoseconds)"
-
-        block_pattern = re.compile(
-            r"unsigned int sysctl_sched_base_slice = 750000ULL;\n"
-            r"EXPORT_SYMBOL_GPL\(sysctl_sched_base_slice\);\n"
-            r"static unsigned int normalized_sysctl_sched_base_slice = 750000ULL;"
-        )
-
-        if comment_old not in text:
-            print("::error::Android 0.75 ms base-slice comment was not found in fair.c")
+        def fail(message: str) -> None:
+            print(f"::error::{message}")
+            pos = text.find("sysctl_sched_base_slice")
+            if pos >= 0:
+                begin = max(0, text.rfind("\n", 0, max(0, pos - 700)))
+                finish = min(len(text), text.find("\n", pos + 700))
+                print("----- fair.c context -----")
+                print(text[begin:finish])
+                print("--------------------------")
             sys.exit(1)
 
-        text, comment_count = text.replace(comment_old, comment_new, 1), 1
-        text, block_count = block_pattern.subn(
-            "unsigned int sysctl_sched_base_slice = 700000ULL;\n"
+        # Normalize the comment expected by the upstream hunk.
+        if "default: 0.75 msec" in text:
+            text = text.replace("default: 0.75 msec", "default: 0.70 msec", 1)
+        elif "default: 0.70 msec" not in text:
+            fail("Neither the Android 0.75 ms nor upstream 0.70 ms base-slice comment was found")
+
+        # Normalize both assignments independently. This works whether the
+        # protected export line is present, absent, or separated by whitespace.
+        base_pattern = re.compile(
+            r"(?m)^unsigned int sysctl_sched_base_slice\s*=\s*750000(?:ULL|UL|U|LL|L)?;\s*$"
+        )
+        normalized_pattern = re.compile(
+            r"(?m)^static unsigned int normalized_sysctl_sched_base_slice\s*=\s*750000(?:ULL|UL|U|LL|L)?;\s*$"
+        )
+
+        text, base_count = base_pattern.subn(
+            "unsigned int sysctl_sched_base_slice = 700000ULL;", text, count=1
+        )
+        text, normalized_count = normalized_pattern.subn(
             "static unsigned int normalized_sysctl_sched_base_slice = 700000ULL;",
             text,
             count=1,
         )
 
-        if block_count != 1:
-            print("::error::Android base-slice/export block was not found exactly once in fair.c")
-            sys.exit(1)
+        # A rerun or a prior source patch may already have normalized the values.
+        if base_count == 0 and not re.search(
+            r"(?m)^unsigned int sysctl_sched_base_slice\s*=\s*700000ULL;\s*$", text
+        ):
+            fail("sysctl_sched_base_slice was not found with a supported Android value")
+
+        if normalized_count == 0 and not re.search(
+            r"(?m)^static unsigned int normalized_sysctl_sched_base_slice\s*=\s*700000ULL;\s*$",
+            text,
+        ):
+            fail("normalized_sysctl_sched_base_slice was not found with a supported Android value")
+
+        # The BORE hunk is based on upstream, where this export is absent.
+        # WildKernel normally removes it earlier; remove it only when still present.
+        text, export_count = re.subn(
+            r"(?m)^[ \t]*EXPORT_SYMBOL_GPL\(sysctl_sched_base_slice\);[ \t]*\n",
+            "",
+            text,
+            count=1,
+        )
 
         path.write_text(text)
-        print("Normalized Android fair.c base-slice block for the upstream BORE patch.")
+        print(
+            "Normalized fair.c for BORE: "
+            f"base={base_count}, normalized={normalized_count}, "
+            f"optional_export_removed={export_count}"
+        )
         PY
 
         echo "========================================"
@@ -436,43 +470,7 @@ jobs:
           patch "${PATCH_OPTIONS[@]}" < "$BORE_PATCH"
           echo "Main BORE patch applied successfully."
 
-          echo "Restoring Android fair.c fallback defaults and exported symbol..."
-          python3 - <<'PY'
-        from pathlib import Path
-        import sys
-
-        path = Path("kernel/sched/fair.c")
-        text = path.read_text()
-
-        old = (
-            "unsigned int sysctl_sched_base_slice = 700000ULL;\n"
-            "static unsigned int normalized_sysctl_sched_base_slice = 700000ULL;\n"
-            "#endif /* CONFIG_SCHED_BORE */\n\n"
-            "/*\n"
-            " * After fork, child runs first."
-        )
-        new = (
-            "unsigned int sysctl_sched_base_slice = 750000ULL;\n"
-            "static unsigned int normalized_sysctl_sched_base_slice = 750000ULL;\n"
-            "#endif /* CONFIG_SCHED_BORE */\n"
-            "EXPORT_SYMBOL_GPL(sysctl_sched_base_slice);\n\n"
-            "/*\n"
-            " * After fork, child runs first."
-        )
-
-        if old not in text:
-            print("::error::Patched BORE fallback block was not found in fair.c")
-            sys.exit(1)
-
-        text = text.replace(old, new, 1)
-        text = text.replace(
-            " * EEVDF: default 0.70 msec * (1 + ilog(ncpus)), units: nanoseconds",
-            " * EEVDF: default 0.75 msec * (1 + ilog(ncpus)), units: nanoseconds",
-            1,
-        )
-        path.write_text(text)
-        print("Restored Android's 0.75 ms fallback and sysctl_sched_base_slice export.")
-        PY
+          echo "Keeping the canonical BORE fallback block (700000 ns)."
         else
           echo "::error::BORE patch still cannot be applied to this Android 6.12 tree."
           echo "::error::A manual source-level backport is required."
