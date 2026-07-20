@@ -336,47 +336,39 @@ jobs:
       shell: bash
       working-directory: ${{ github.workspace }}/kernel/common
       run: |
-          set -euo pipefail
+        set -euo pipefail
 
-          echo "========================================"
-          echo " Downloading BORE scheduler patches"
-          echo "========================================"
+        echo "========================================"
+        echo " Downloading BORE scheduler patches"
+        echo "========================================"
 
-          BORE_DIR="${{ github.workspace }}/bore-scheduler"
+        BORE_DIR="${{ github.workspace }}/bore-scheduler"
+        BORE_COMMIT="16bf5baebbb42cdba393c501ba9c2af5f84e4749"
 
-          rm -rf "$BORE_DIR"
+        rm -rf "$BORE_DIR"
+        git init -q "$BORE_DIR"
+        git -C "$BORE_DIR" remote add origin \
+          https://github.com/firelzrd/bore-scheduler.git
+        git -C "$BORE_DIR" fetch --depth=1 origin "$BORE_COMMIT"
+        git -C "$BORE_DIR" checkout -q --detach FETCH_HEAD
 
-          git clone --depth=1 \
-            https://github.com/firelzrd/bore-scheduler.git \
-            "$BORE_DIR"
+        BORE_PATCH="$BORE_DIR/patches/stable/linux-6.12-bore/0001-linux6.12.37-bore-6.6.3.patch"
+        SCX_PATCH="$BORE_DIR/patches/additions/0002-sched-ext-coexistence-fix.patch"
 
-          BORE_PATCH="$(
-            find "$BORE_DIR/patches/stable/linux-6.12-bore" \
-              -maxdepth 1 \
-              -type f \
-              -name '0001-linux6.12*-bore-*.patch' \
-              | sort -V \
-              | tail -n 1
-          )"
+        test -f "$BORE_PATCH" || {
+          echo "::error::Pinned BORE patch was not found: $BORE_PATCH"
+          exit 1
+        }
 
-          SCX_PATCH="$BORE_DIR/patches/additions/0002-sched-ext-coexistence-fix.patch"
+        test -f "$SCX_PATCH" || {
+          echo "::error::sched-ext coexistence patch was not found: $SCX_PATCH"
+          exit 1
+        }
 
-          if [ -z "$BORE_PATCH" ] || [ ! -f "$BORE_PATCH" ]; then
-            echo "::error::No stable Linux 6.12 BORE patch was found."
-            exit 1
-          fi
+        echo "Main BORE patch: $BORE_PATCH"
+        echo "BORE repository commit: $(git -C "$BORE_DIR" rev-parse HEAD)"
 
-          echo "Main BORE patch:"
-          echo "$BORE_PATCH"
-
-          echo "BORE repository commit:"
-          git -C "$BORE_DIR" rev-parse HEAD
-
-          echo "========================================"
-          echo " Applying main BORE patch"
-          echo "========================================"
-
-          PATCH_OPTIONS=(
+        PATCH_OPTIONS=(
           -p1
           --batch
           --forward
@@ -384,164 +376,140 @@ jobs:
           --ignore-whitespace
           --no-backup-if-mismatch
         )
-        
-        echo "Testing patch with Android-compatible fuzzy matching..."
-        
+
+        echo "========================================"
+        echo " Applying main BORE patch"
+        echo "========================================"
+        echo "Testing with Android-compatible fuzzy matching..."
+
         if patch --dry-run "${PATCH_OPTIONS[@]}" < "$BORE_PATCH"; then
           patch "${PATCH_OPTIONS[@]}" < "$BORE_PATCH"
           echo "Main BORE patch applied successfully."
         else
-          echo "::error::BORE patch still cannot be applied."
-          echo "::error::A manual Android 6.12 backport is required."
+          echo "::error::BORE patch still cannot be applied to this Android 6.12 tree."
+          echo "::error::A manual source-level backport is required."
           exit 1
         fi
-        
+
         echo "Checking for rejected hunks..."
-        
         REJECTS="$(find . -type f -name '*.rej' -print)"
-        
         if [ -n "$REJECTS" ]; then
           echo "::error::Rejected BORE hunks were found:"
           echo "$REJECTS"
-        
           while IFS= read -r reject; do
             echo "========================================"
             echo "$reject"
             echo "========================================"
             cat "$reject"
           done <<< "$REJECTS"
-        
           exit 1
         fi
 
         echo "========================================"
         echo " Verifying main BORE integration"
         echo "========================================"
-        
+
         test -f include/linux/sched/bore.h || {
           echo "::error::include/linux/sched/bore.h is missing"
           exit 1
         }
-        
+
         test -f kernel/sched/bore.c || {
           echo "::error::kernel/sched/bore.c is missing"
           exit 1
         }
-        
+
         grep -q 'struct bore_ctx' include/linux/sched.h || {
           echo "::error::struct bore_ctx was not added to sched.h"
           exit 1
         }
-        
+
         grep -q 'struct bore_ctx bore;' include/linux/sched.h || {
           echo "::error::BORE context was not added to task_struct"
           exit 1
         }
-        
-        grep -q 'CONFIG_SCHED_BORE.*bore.o' kernel/sched/Makefile || {
+
+        grep -q 'CONFIG_SCHED_BORE.*bore\.o' kernel/sched/Makefile || {
           echo "::error::bore.o was not added to the scheduler Makefile"
           exit 1
         }
-        
+
         grep -q 'sched_init_bore();' kernel/sched/core.c || {
           echo "::error::sched_init_bore() was not added to core.c"
           exit 1
         }
-        
+
         grep -q 'update_curr_bore' kernel/sched/fair.c || {
           echo "::error::update_curr_bore() was not added to fair.c"
           exit 1
         }
-        
+
         grep -q 'futex_waiting' kernel/futex/waitwake.c || {
           echo "::error::BORE futex handling was not added"
           exit 1
         }
-        
+
         grep -q 'config SCHED_BORE' init/Kconfig || {
           echo "::error::CONFIG_SCHED_BORE was not added"
           exit 1
         }
-        
+
         git diff --check
-        
         echo "Main BORE source verification passed."
 
-          echo "========================================"
-          echo " Applying sched-ext coexistence fix"
-          echo "========================================"
+        echo "========================================"
+        echo " Applying sched-ext coexistence fix"
+        echo "========================================"
 
-          if grep -Rqs \
-          'void reweight_task(struct task_struct' \
-          kernel/sched; then
-        
+        if grep -Rqs 'void reweight_task(struct task_struct' kernel/sched; then
           echo "BORE sched-ext reweight_task() already exists."
           echo "Skipping coexistence patch."
-        
-        elif [ ! -f "$SCX_PATCH" ]; then
-        
-          echo "::error::sched-ext coexistence patch was not found."
-          exit 1
-        
         elif patch --dry-run "${PATCH_OPTIONS[@]}" < "$SCX_PATCH"; then
-        
           patch "${PATCH_OPTIONS[@]}" < "$SCX_PATCH"
           echo "sched-ext coexistence patch applied successfully."
-        
         else
-        
           echo "::error::sched-ext coexistence patch could not be applied."
           exit 1
         fi
-        
+
         if find . -type f -name '*.rej' -print -quit | grep -q .; then
           echo "::error::Rejected hunks exist after sched-ext integration."
           find . -type f -name '*.rej' -print
           exit 1
         fi
 
-          echo "========================================"
-          echo " Enabling BORE configuration"
-          echo "========================================"
+        echo "========================================"
+        echo " Enabling BORE configuration"
+        echo "========================================"
 
-          ./scripts/config \
-            --file arch/arm64/configs/gki_defconfig \
-            --enable SCHED_BORE \
-            --set-val MIN_BASE_SLICE_NS 2000000
+        ./scripts/config \
+          --file arch/arm64/configs/gki_defconfig \
+          --enable SCHED_BORE \
+          --set-val MIN_BASE_SLICE_NS 2000000
 
-          echo "CONFIG_SCHED_BORE=y" \
-            >> "${{ github.workspace }}/wild_gki.fragment"
+        {
+          echo 'CONFIG_SCHED_BORE=y'
+          echo 'CONFIG_MIN_BASE_SLICE_NS=2000000'
+        } >> "${{ github.workspace }}/wild_gki.fragment"
 
-          echo "CONFIG_MIN_BASE_SLICE_NS=2000000" \
-            >> "${{ github.workspace }}/wild_gki.fragment"
+        echo "========================================"
+        echo " Verifying source and configuration"
+        echo "========================================"
 
-          echo "========================================"
-          echo " Verifying source and configuration"
-          echo "========================================"
+        grep -q '^CONFIG_SCHED_BORE=y$' \
+          arch/arm64/configs/gki_defconfig
+        grep -q '^CONFIG_MIN_BASE_SLICE_NS=2000000$' \
+          arch/arm64/configs/gki_defconfig
+        grep -Rqs 'config SCHED_BORE' init kernel
+        test -f kernel/sched/bore.c
+        test -f include/linux/sched/bore.h
+        git diff --check
 
-          grep -q \
-            '^CONFIG_SCHED_BORE=y$' \
-            arch/arm64/configs/gki_defconfig
+        echo "Final BORE configuration:"
+        grep -E '^CONFIG_(SCHED_BORE|MIN_BASE_SLICE_NS)=' \
+          arch/arm64/configs/gki_defconfig
 
-          grep -q \
-            '^CONFIG_MIN_BASE_SLICE_NS=2000000$' \
-            arch/arm64/configs/gki_defconfig
-
-          grep -Rqs \
-            'config SCHED_BORE' \
-            init kernel
-
-          test -f kernel/sched/bore.c
-          test -f include/linux/sched/bore.h
-
-          git diff --check
-
-          echo "Final BORE configuration:"
-          grep -E \
-            '^CONFIG_(SCHED_BORE|MIN_BASE_SLICE_NS)=' \
-            arch/arm64/configs/gki_defconfig
-
-          echo "BORE scheduler source integration completed."
+        echo "BORE scheduler source integration completed."
 
     - name: Build Normal Kernel
       env:
@@ -556,39 +524,37 @@ jobs:
       if: ${{ inputs.version == 'android16-6.12' }}
       shell: bash
       run: |
-          set -euo pipefail
+        set -euo pipefail
 
-          IMAGE="${{ github.workspace }}/AnyKernel3/Image"
+        IMAGE="${{ github.workspace }}/AnyKernel3/Image"
 
-          if [ ! -s "$IMAGE" ]; then
-            echo "::error::Compiled kernel Image was not found."
-            exit 1
-          fi
+        if [ ! -s "$IMAGE" ]; then
+          echo "::error::Compiled kernel Image was not found."
+          exit 1
+        fi
 
-          echo "Kernel image size:"
-          ls -lh "$IMAGE"
+        echo "Kernel image size:"
+        ls -lh "$IMAGE"
 
-          echo "Kernel version:"
-          strings "$IMAGE" \
-            | grep -m1 '^Linux version ' \
-            || true
+        echo "Kernel version:"
+        strings "$IMAGE" | grep -m1 '^Linux version ' || true
 
-          if strings "$IMAGE" | grep -q 'sched_bore'; then
-            echo "BORE sysctl strings were found in the compiled image."
-          else
-            echo "::error::sched_bore was not found in the compiled image."
-            echo "::error::BORE may not have been enabled in the final config."
-            exit 1
-          fi
+        if strings "$IMAGE" | grep -q 'sched_bore'; then
+          echo "BORE sysctl strings were found in the compiled image."
+        else
+          echo "::error::sched_bore was not found in the compiled image."
+          echo "::error::BORE may not have been enabled in the final config."
+          exit 1
+        fi
 
-          if strings "$IMAGE" | grep -qi 'burst_penalty'; then
-            echo "BORE burst penalty tunables were found."
-          else
-            echo "::warning::Burst penalty strings were not detected."
-          fi
+        if strings "$IMAGE" | grep -qi 'burst_penalty'; then
+          echo "BORE burst penalty tunables were found."
+        else
+          echo "::warning::Burst penalty strings were not detected."
+        fi
 
-          echo "BORE kernel image verification completed."
-          
+        echo "BORE kernel image verification completed."
+
     - name: Get Cache Stats
       uses: ./.github/actions/cache-stats
       with:
