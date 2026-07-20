@@ -330,6 +330,133 @@ jobs:
 
     - name: Initialize Config Fragment
       run: touch "${{ github.workspace }}/wild_gki.fragment"
+      
+    - name: Apply BORE Scheduler
+      if: ${{ inputs.version == 'android16-6.12' }}
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel/common
+      run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo " Downloading BORE scheduler patches"
+          echo "========================================"
+
+          BORE_DIR="${{ github.workspace }}/bore-scheduler"
+
+          rm -rf "$BORE_DIR"
+
+          git clone --depth=1 \
+            https://github.com/firelzrd/bore-scheduler.git \
+            "$BORE_DIR"
+
+          BORE_PATCH="$(
+            find "$BORE_DIR/patches/stable/linux-6.12-bore" \
+              -maxdepth 1 \
+              -type f \
+              -name '0001-linux6.12*-bore-*.patch' \
+              | sort -V \
+              | tail -n 1
+          )"
+
+          SCX_PATCH="$BORE_DIR/patches/additions/0002-sched-ext-coexistence-fix.patch"
+
+          if [ -z "$BORE_PATCH" ] || [ ! -f "$BORE_PATCH" ]; then
+            echo "::error::No stable Linux 6.12 BORE patch was found."
+            exit 1
+          fi
+
+          echo "Main BORE patch:"
+          echo "$BORE_PATCH"
+
+          echo "BORE repository commit:"
+          git -C "$BORE_DIR" rev-parse HEAD
+
+          echo "========================================"
+          echo " Applying main BORE patch"
+          echo "========================================"
+
+          if git apply --check "$BORE_PATCH"; then
+            git apply "$BORE_PATCH"
+            echo "Main BORE patch applied successfully."
+          else
+            echo "::error::The main BORE patch does not apply cleanly."
+            echo "::error::The current patch targets a different Linux 6.12 revision."
+            git apply --check --verbose "$BORE_PATCH" || true
+            exit 1
+          fi
+
+          echo "========================================"
+          echo " Applying sched-ext coexistence fix"
+          echo "========================================"
+
+          if grep -Rqs \
+            'reweight_task(struct task_struct' \
+            kernel/sched; then
+
+            echo "reweight_task() is already present."
+            echo "Skipping the sched-ext coexistence patch."
+
+          elif [ ! -f "$SCX_PATCH" ]; then
+
+            echo "::error::sched-ext coexistence patch was not found."
+            exit 1
+
+          elif git apply --check "$SCX_PATCH"; then
+
+            git apply "$SCX_PATCH"
+            echo "sched-ext coexistence patch applied successfully."
+
+          else
+
+            echo "::error::sched-ext coexistence patch does not apply cleanly."
+            git apply --check --verbose "$SCX_PATCH" || true
+            exit 1
+
+          fi
+
+          echo "========================================"
+          echo " Enabling BORE configuration"
+          echo "========================================"
+
+          ./scripts/config \
+            --file arch/arm64/configs/gki_defconfig \
+            --enable SCHED_BORE \
+            --set-val MIN_BASE_SLICE_NS 2000000
+
+          echo "CONFIG_SCHED_BORE=y" \
+            >> "${{ github.workspace }}/wild_gki.fragment"
+
+          echo "CONFIG_MIN_BASE_SLICE_NS=2000000" \
+            >> "${{ github.workspace }}/wild_gki.fragment"
+
+          echo "========================================"
+          echo " Verifying source and configuration"
+          echo "========================================"
+
+          grep -q \
+            '^CONFIG_SCHED_BORE=y$' \
+            arch/arm64/configs/gki_defconfig
+
+          grep -q \
+            '^CONFIG_MIN_BASE_SLICE_NS=2000000$' \
+            arch/arm64/configs/gki_defconfig
+
+          grep -Rqs \
+            'config SCHED_BORE' \
+            init kernel
+
+          test -f kernel/sched/bore.c
+          test -f include/linux/sched/bore.h
+
+          git diff --check
+
+          echo "Final BORE configuration:"
+          grep -E \
+            '^CONFIG_(SCHED_BORE|MIN_BASE_SLICE_NS)=' \
+            arch/arm64/configs/gki_defconfig
+
+          echo "BORE scheduler source integration completed."
 
     - name: Build Normal Kernel
       env:
@@ -340,6 +467,43 @@ jobs:
         version: ${{ inputs.version }}
         bypass: false
 
+    - name: Verify BORE Kernel Image
+      if: ${{ inputs.version == 'android16-6.12' }}
+      shell: bash
+      run: |
+          set -euo pipefail
+
+          IMAGE="${{ github.workspace }}/AnyKernel3/Image"
+
+          if [ ! -s "$IMAGE" ]; then
+            echo "::error::Compiled kernel Image was not found."
+            exit 1
+          fi
+
+          echo "Kernel image size:"
+          ls -lh "$IMAGE"
+
+          echo "Kernel version:"
+          strings "$IMAGE" \
+            | grep -m1 '^Linux version ' \
+            || true
+
+          if strings "$IMAGE" | grep -q 'sched_bore'; then
+            echo "BORE sysctl strings were found in the compiled image."
+          else
+            echo "::error::sched_bore was not found in the compiled image."
+            echo "::error::BORE may not have been enabled in the final config."
+            exit 1
+          fi
+
+          if strings "$IMAGE" | grep -qi 'burst_penalty'; then
+            echo "BORE burst penalty tunables were found."
+          else
+            echo "::warning::Burst penalty strings were not detected."
+          fi
+
+          echo "BORE kernel image verification completed."
+          
     - name: Get Cache Stats
       uses: ./.github/actions/cache-stats
       with:
