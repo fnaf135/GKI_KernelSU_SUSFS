@@ -376,44 +376,129 @@ jobs:
           echo " Applying main BORE patch"
           echo "========================================"
 
-          if git apply --check "$BORE_PATCH"; then
-            git apply "$BORE_PATCH"
-            echo "Main BORE patch applied successfully."
-          else
-            echo "::error::The main BORE patch does not apply cleanly."
-            echo "::error::The current patch targets a different Linux 6.12 revision."
-            git apply --check --verbose "$BORE_PATCH" || true
-            exit 1
-          fi
+          PATCH_OPTIONS=(
+          -p1
+          --batch
+          --forward
+          --fuzz=3
+          --ignore-whitespace
+          --no-backup-if-mismatch
+        )
+        
+        echo "Testing patch with Android-compatible fuzzy matching..."
+        
+        if patch --dry-run "${PATCH_OPTIONS[@]}" < "$BORE_PATCH"; then
+          patch "${PATCH_OPTIONS[@]}" < "$BORE_PATCH"
+          echo "Main BORE patch applied successfully."
+        else
+          echo "::error::BORE patch still cannot be applied."
+          echo "::error::A manual Android 6.12 backport is required."
+          exit 1
+        fi
+        
+        echo "Checking for rejected hunks..."
+        
+        REJECTS="$(find . -type f -name '*.rej' -print)"
+        
+        if [ -n "$REJECTS" ]; then
+          echo "::error::Rejected BORE hunks were found:"
+          echo "$REJECTS"
+        
+          while IFS= read -r reject; do
+            echo "========================================"
+            echo "$reject"
+            echo "========================================"
+            cat "$reject"
+          done <<< "$REJECTS"
+        
+          exit 1
+        fi
+
+        echo "========================================"
+        echo " Verifying main BORE integration"
+        echo "========================================"
+        
+        test -f include/linux/sched/bore.h || {
+          echo "::error::include/linux/sched/bore.h is missing"
+          exit 1
+        }
+        
+        test -f kernel/sched/bore.c || {
+          echo "::error::kernel/sched/bore.c is missing"
+          exit 1
+        }
+        
+        grep -q 'struct bore_ctx' include/linux/sched.h || {
+          echo "::error::struct bore_ctx was not added to sched.h"
+          exit 1
+        }
+        
+        grep -q 'struct bore_ctx bore;' include/linux/sched.h || {
+          echo "::error::BORE context was not added to task_struct"
+          exit 1
+        }
+        
+        grep -q 'CONFIG_SCHED_BORE.*bore.o' kernel/sched/Makefile || {
+          echo "::error::bore.o was not added to the scheduler Makefile"
+          exit 1
+        }
+        
+        grep -q 'sched_init_bore();' kernel/sched/core.c || {
+          echo "::error::sched_init_bore() was not added to core.c"
+          exit 1
+        }
+        
+        grep -q 'update_curr_bore' kernel/sched/fair.c || {
+          echo "::error::update_curr_bore() was not added to fair.c"
+          exit 1
+        }
+        
+        grep -q 'futex_waiting' kernel/futex/waitwake.c || {
+          echo "::error::BORE futex handling was not added"
+          exit 1
+        }
+        
+        grep -q 'config SCHED_BORE' init/Kconfig || {
+          echo "::error::CONFIG_SCHED_BORE was not added"
+          exit 1
+        }
+        
+        git diff --check
+        
+        echo "Main BORE source verification passed."
 
           echo "========================================"
           echo " Applying sched-ext coexistence fix"
           echo "========================================"
 
           if grep -Rqs \
-            'reweight_task(struct task_struct' \
-            kernel/sched; then
-
-            echo "reweight_task() is already present."
-            echo "Skipping the sched-ext coexistence patch."
-
-          elif [ ! -f "$SCX_PATCH" ]; then
-
-            echo "::error::sched-ext coexistence patch was not found."
-            exit 1
-
-          elif git apply --check "$SCX_PATCH"; then
-
-            git apply "$SCX_PATCH"
-            echo "sched-ext coexistence patch applied successfully."
-
-          else
-
-            echo "::error::sched-ext coexistence patch does not apply cleanly."
-            git apply --check --verbose "$SCX_PATCH" || true
-            exit 1
-
-          fi
+          'void reweight_task(struct task_struct' \
+          kernel/sched; then
+        
+          echo "BORE sched-ext reweight_task() already exists."
+          echo "Skipping coexistence patch."
+        
+        elif [ ! -f "$SCX_PATCH" ]; then
+        
+          echo "::error::sched-ext coexistence patch was not found."
+          exit 1
+        
+        elif patch --dry-run "${PATCH_OPTIONS[@]}" < "$SCX_PATCH"; then
+        
+          patch "${PATCH_OPTIONS[@]}" < "$SCX_PATCH"
+          echo "sched-ext coexistence patch applied successfully."
+        
+        else
+        
+          echo "::error::sched-ext coexistence patch could not be applied."
+          exit 1
+        fi
+        
+        if find . -type f -name '*.rej' -print -quit | grep -q .; then
+          echo "::error::Rejected hunks exist after sched-ext integration."
+          find . -type f -name '*.rej' -print
+          exit 1
+        fi
 
           echo "========================================"
           echo " Enabling BORE configuration"
