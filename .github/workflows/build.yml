@@ -378,6 +378,56 @@ jobs:
         )
 
         echo "========================================"
+        echo " Preparing Android fair.c compatibility shim"
+        echo "========================================"
+
+        # Android 16's 6.12 tree uses a 0.75 ms / 750000 ns fallback and
+        # exports sysctl_sched_base_slice. The upstream BORE 6.12.37 patch
+        # expects the upstream 0.70 ms / 700000 ns layout without that export.
+        # Normalize only this small block so the BORE hunk can apply, then
+        # restore Android's fallback and symbol export immediately afterward.
+        python3 - <<'PY'
+        from pathlib import Path
+        import re
+        import sys
+
+        path = Path("kernel/sched/fair.c")
+        text = path.read_text()
+
+        if "#ifdef CONFIG_SCHED_BORE\nunsigned int sysctl_sched_tunable_scaling" in text:
+            print("BORE tunable block is already present; compatibility shim is unnecessary.")
+            raise SystemExit(0)
+
+        comment_old = " * (default: 0.75 msec * (1 + ilog(ncpus)), units: nanoseconds)"
+        comment_new = " * (default: 0.70 msec * (1 + ilog(ncpus)), units: nanoseconds)"
+
+        block_pattern = re.compile(
+            r"unsigned int sysctl_sched_base_slice = 750000ULL;\n"
+            r"EXPORT_SYMBOL_GPL\(sysctl_sched_base_slice\);\n"
+            r"static unsigned int normalized_sysctl_sched_base_slice = 750000ULL;"
+        )
+
+        if comment_old not in text:
+            print("::error::Android 0.75 ms base-slice comment was not found in fair.c")
+            sys.exit(1)
+
+        text, comment_count = text.replace(comment_old, comment_new, 1), 1
+        text, block_count = block_pattern.subn(
+            "unsigned int sysctl_sched_base_slice = 700000ULL;\n"
+            "static unsigned int normalized_sysctl_sched_base_slice = 700000ULL;",
+            text,
+            count=1,
+        )
+
+        if block_count != 1:
+            print("::error::Android base-slice/export block was not found exactly once in fair.c")
+            sys.exit(1)
+
+        path.write_text(text)
+        print("Normalized Android fair.c base-slice block for the upstream BORE patch.")
+        PY
+
+        echo "========================================"
         echo " Applying main BORE patch"
         echo "========================================"
         echo "Testing with Android-compatible fuzzy matching..."
@@ -385,6 +435,44 @@ jobs:
         if patch --dry-run "${PATCH_OPTIONS[@]}" < "$BORE_PATCH"; then
           patch "${PATCH_OPTIONS[@]}" < "$BORE_PATCH"
           echo "Main BORE patch applied successfully."
+
+          echo "Restoring Android fair.c fallback defaults and exported symbol..."
+          python3 - <<'PY'
+        from pathlib import Path
+        import sys
+
+        path = Path("kernel/sched/fair.c")
+        text = path.read_text()
+
+        old = (
+            "unsigned int sysctl_sched_base_slice = 700000ULL;\n"
+            "static unsigned int normalized_sysctl_sched_base_slice = 700000ULL;\n"
+            "#endif /* CONFIG_SCHED_BORE */\n\n"
+            "/*\n"
+            " * After fork, child runs first."
+        )
+        new = (
+            "unsigned int sysctl_sched_base_slice = 750000ULL;\n"
+            "static unsigned int normalized_sysctl_sched_base_slice = 750000ULL;\n"
+            "#endif /* CONFIG_SCHED_BORE */\n"
+            "EXPORT_SYMBOL_GPL(sysctl_sched_base_slice);\n\n"
+            "/*\n"
+            " * After fork, child runs first."
+        )
+
+        if old not in text:
+            print("::error::Patched BORE fallback block was not found in fair.c")
+            sys.exit(1)
+
+        text = text.replace(old, new, 1)
+        text = text.replace(
+            " * EEVDF: default 0.70 msec * (1 + ilog(ncpus)), units: nanoseconds",
+            " * EEVDF: default 0.75 msec * (1 + ilog(ncpus)), units: nanoseconds",
+            1,
+        )
+        path.write_text(text)
+        print("Restored Android's 0.75 ms fallback and sysctl_sched_base_slice export.")
+        PY
         else
           echo "::error::BORE patch still cannot be applied to this Android 6.12 tree."
           echo "::error::A manual source-level backport is required."
