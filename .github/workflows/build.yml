@@ -505,13 +505,19 @@ jobs:
           exit 1
         }
 
-        grep -q 'struct bore_ctx' include/linux/sched.h || {
+        grep -Eq '^[[:space:]]*struct[[:space:]]+bore_ctx[[:space:]]*\{' \
+          include/linux/sched.h || {
           echo "::error::struct bore_ctx was not added to sched.h"
           exit 1
         }
 
-        grep -q 'struct bore_ctx bore;' include/linux/sched.h || {
+        # The kernel style aligns struct members with tabs, so do not require
+        # one literal space between the type and member name.
+        grep -Eq '^[[:space:]]*struct[[:space:]]+bore_ctx[[:space:]]+bore[[:space:]]*;[[:space:]]*$' \
+          include/linux/sched.h || {
           echo "::error::BORE context was not added to task_struct"
+          echo "Detected bore_ctx lines:"
+          grep -nE 'bore_ctx|CONFIG_SCHED_BORE' include/linux/sched.h || true
           exit 1
         }
 
