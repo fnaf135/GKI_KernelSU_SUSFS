@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Adapt Android's exported EEVDF base-slice declaration for the BORE patch.
 
-The official BORE patch targets upstream Linux 6.12.37. Android common keeps
-small ABI/export changes around sysctl_sched_base_slice. This tool temporarily
+The official BORE 6.8.0-rc1 patch targets upstream Linux 6.12.37. Android
+common keeps small ABI/export changes around sysctl_sched_base_slice. This tool temporarily
 normalizes only those declarations, lets GNU patch apply the official diff,
 and then restores Android's declarations/export in the BORE #else branch.
 """

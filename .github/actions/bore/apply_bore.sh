@@ -2,8 +2,8 @@
 set -euo pipefail
 
 readonly BORE_REPOSITORY="https://github.com/firelzrd/bore-scheduler.git"
-readonly BORE_COMMIT="16bf5baebbb42cdba393c501ba9c2af5f84e4749"
-readonly BORE_PATCH_REL="patches/stable/linux-6.12-bore/0001-linux6.12.37-bore-6.6.3.patch"
+readonly BORE_COMMIT="507dca0bbc4db73f1a08ef03ea6d36e8cb1b8156"
+readonly BORE_PATCH_REL="patches/testing/0001-linux6.12.37-bore-6.8.0-rc1.patch"
 readonly ACTION_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly KERNEL_ROOT="$(pwd)"
 
@@ -21,8 +21,8 @@ if [[ ! -f Makefile || ! -f kernel/sched/fair.c ]]; then
   die "Run this action from the root of kernel/common."
 fi
 
-if grep -q 'SCHED_BORE_VERSION "6\.6\.3"' include/linux/sched/bore.h 2>/dev/null; then
-  log "BORE 6.6.3 is already present; nothing to do."
+if grep -q 'SCHED_BORE_VERSION "6\.8\.0-rc1"' include/linux/sched/bore.h 2>/dev/null; then
+  log "BORE 6.8.0-rc1 is already present; nothing to do."
   exit 0
 fi
 
@@ -118,7 +118,7 @@ done
 
 grep -q 'config SCHED_BORE' init/Kconfig \
   || die "CONFIG_SCHED_BORE was not added to init/Kconfig."
-grep -q 'SCHED_BORE_VERSION "6\.6\.3"' include/linux/sched/bore.h \
+grep -q 'SCHED_BORE_VERSION "6\.8\.0-rc1"' include/linux/sched/bore.h \
   || die "Unexpected or missing BORE version marker."
 grep -q 'bore\.o' kernel/sched/Makefile \
   || die "kernel/sched/bore.o was not added to the scheduler Makefile."
@@ -145,11 +145,11 @@ if ! git diff --check -- "${bore_touched_files[@]}"; then
   die "BORE changes contain whitespace errors."
 fi
 
-log "BORE Scheduler 6.6.3 applied successfully to ${BORE_ANDROID_VERSION}-${BORE_KERNEL_VERSION}.${BORE_KERNEL_SUBLEVEL:-x}."
+log "BORE Scheduler 6.8.0-rc1 applied successfully to ${BORE_ANDROID_VERSION}-${BORE_KERNEL_VERSION}.${BORE_KERNEL_SUBLEVEL:-x}."
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
     echo "### BORE Scheduler"
-    echo "- Version: **6.6.3**"
+    echo "- Version: **6.8.0-rc1 (testing)**"
     echo "- Source commit: \`${BORE_COMMIT}\`"
     echo "- Kernel: \`${BORE_ANDROID_VERSION}-${BORE_KERNEL_VERSION}.${BORE_KERNEL_SUBLEVEL:-x}\`"
     echo "- Config: \`CONFIG_SCHED_BORE=y\`, \`CONFIG_MIN_BASE_SLICE_NS=2000000\`"

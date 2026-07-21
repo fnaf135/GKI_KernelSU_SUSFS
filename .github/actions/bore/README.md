@@ -1,10 +1,12 @@
 # BORE Scheduler action
 
-This composite action applies the official BORE 6.6.3 patch for Linux 6.12,
-pinned to upstream commit `16bf5baebbb42cdba393c501ba9c2af5f84e4749`.
+This composite action applies the official BORE 6.8.0-rc1 testing patch for
+Linux 6.12, pinned to upstream commit
+`507dca0bbc4db73f1a08ef03ea6d36e8cb1b8156`.
 
-The upstream patch targets Linux 6.12.37. Android common has a small ABI/export
-difference around `sysctl_sched_base_slice`, so the action uses a narrow
+The upstream release-candidate patch targets Linux 6.12.37. Android common has
+a small ABI/export difference around `sysctl_sched_base_slice`, so the action
+uses a narrow
 compatibility pass:
 
 1. Try the official patch unchanged with zero fuzz.
@@ -23,5 +25,6 @@ CONFIG_SCHED_BORE=y
 CONFIG_MIN_BASE_SLICE_NS=2000000
 ```
 
-The optional upstream SMT preference patch is intentionally not applied because
-GKI arm64 phone targets generally do not use SMT and it is not required for BORE.
+This is an upstream testing release candidate, not the stable BORE branch. The
+optional upstream SMT preference patch is intentionally not applied because GKI
+arm64 phone targets generally do not use SMT and it is not required for BORE.

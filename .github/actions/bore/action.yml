@@ -1,5 +1,5 @@
 name: 'Apply BORE Scheduler'
-description: 'Apply the official BORE scheduler patch to Android 16 / Linux 6.12 GKI'
+description: 'Apply official BORE 6.8.0-rc1 to Android 16 / Linux 6.12 GKI'
 
 inputs:
   android_version:
