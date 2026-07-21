@@ -33,18 +33,17 @@ on:
         type: choice
         options:
           - KSUN+SUSFS+BBG+NET+DS+BORE
+          - KSUN+SUSFS+BORE
+          - BORE
           - KSUN+SUSFS+BBG+NET+DS
           - KSUN+SUSFS+BBG
           - KSUN+SUSFS+NET
           - KSUN+SUSFS+DS
-          - KSUN+SUSFS+BORE
           - KSUN+SUSFS
           - KSUN+BBG
           - KSUN+NET
           - KSUN+DS
-          - KSUN+BORE
           - KSUN
-          - BORE
           - NONE
           - FULL
         default: FULL

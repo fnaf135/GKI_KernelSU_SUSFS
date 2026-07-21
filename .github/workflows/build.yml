@@ -138,6 +138,14 @@ jobs:
         sublevel: ${{ steps.extract.outputs.sublevel }}
         os_patch_level: ${{ inputs.os_patch_level }}
 
+    - name: Apply BORE Scheduler
+      if: inputs.android_version == 'android16' && inputs.kernel_version == '6.12' && (contains(inputs.feature_set, 'BORE') || inputs.feature_set == 'FULL')
+      uses: ./.github/actions/bore
+      with:
+        android_version: ${{ inputs.android_version }}
+        kernel_version: ${{ inputs.kernel_version }}
+        sublevel: ${{ steps.extract.outputs.sublevel }}
+
     - name: Setup KernelSU-Next
       if: contains(inputs.feature_set, 'KSUN') || inputs.feature_set == 'FULL'
       uses: ./.github/actions/kernelsu
@@ -197,13 +205,6 @@ jobs:
       if: false
       with:
         kernel_version: ${{ inputs.kernel_version }}
-
-    - name: Apply BORE Scheduler
-      if: contains(inputs.feature_set, 'BORE') || inputs.feature_set == 'FULL'
-      uses: ./.github/actions/bore-scheduler
-      with:
-        kernel_version: ${{ inputs.kernel_version }}
-        version: ${{ inputs.version }}
 
     - name: Setup Misc Configs
       uses: ./.github/actions/misc

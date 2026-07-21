@@ -1,61 +1,33 @@
-name: 'BORE Scheduler Setup'
-description: 'Downloads and applies the BORE CPU scheduler patch'
+name: 'Apply BORE Scheduler'
+description: 'Apply the official BORE scheduler patch to Android 16 / Linux 6.12 GKI'
 
 inputs:
-  kernel_version:
-    description: 'Kernel major version (e.g. 6.12)'
+  android_version:
+    description: 'Android version (android16 is supported)'
     required: true
+  kernel_version:
+    description: 'Kernel version (6.12 is supported)'
+    required: true
+  sublevel:
+    description: 'Kernel sublevel, used for diagnostics'
+    required: false
+    default: ''
 
 runs:
-  using: 'composite'
+  using: composite
   steps:
-    - name: Apply BORE Patch
+    - name: Apply official BORE patch
       shell: bash
-      run: |
-        set -euo pipefail
+      working-directory: ${{ github.workspace }}/kernel/common
+      env:
+        BORE_ANDROID_VERSION: ${{ inputs.android_version }}
+        BORE_KERNEL_VERSION: ${{ inputs.kernel_version }}
+        BORE_KERNEL_SUBLEVEL: ${{ inputs.sublevel }}
+      run: bash "${GITHUB_ACTION_PATH}/apply_bore.sh"
 
-        KVER="${{ inputs.kernel_version }}"
-        echo "======================================================="
-        echo "🚀 Applying BORE Scheduler for Kernel ${KVER}"
-        echo "======================================================="
-
-        PATCH_FILE="bore-${KVER}.patch"
-        SUCCESS=0
-
-        # Try downloading BORE patches from maintained remote sources
-        URLS=(
-          "https://raw.githubusercontent.com/CachyOS/kernel-patches/master/${KVER}/sched/0001-bore-cachy.patch"
-          "https://raw.githubusercontent.com/firelzrd/bore-scheduler/main/patches/stable/linux-${KVER}-bore/0001-linux${KVER}.y-bore.patch"
-          "https://raw.githubusercontent.com/firelzrd/bore-scheduler/main/patches/testing/linux-${KVER}-bore/0001-linux${KVER}.y-bore.patch"
-        )
-
-        for url in "${URLS[@]}"; do
-          echo "Attempting download from: $url"
-          if curl -sSL -f "$url" -o "$PATCH_FILE"; then
-            echo "✅ Successfully downloaded BORE patch from $url"
-            SUCCESS=1
-            break
-          fi
-        done
-
-        # Fallback to local patch file if remote download fails
-        if [ $SUCCESS -ne 1 ]; then
-          echo "⚠️ Could not download BORE patch for ${KVER} from remote sources."
-          if [ -f ".github/patches/bore-${KVER}.patch" ]; then
-            echo "✅ Using local fallback patch from .github/patches/bore-${KVER}.patch"
-            cp ".github/patches/bore-${KVER}.patch" "$PATCH_FILE"
-            SUCCESS=1
-          else
-            echo "❌ Error: BORE patch not found for kernel ${KVER}."
-            exit 1
-          fi
-        fi
-
-        # Apply the patch to kernel source tree
-        echo "Applying BORE patch to kernel tree..."
-        if patch -p1 --forward --ignore-whitespace < "$PATCH_FILE"; then
-          echo "✅ BORE Scheduler patch applied successfully!"
-        else
-          echo "❌ Failed to apply BORE patch."
-          exit 1
-        fi
+    - name: Enable BORE kernel configuration
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_SCHED_BORE=y
+          CONFIG_MIN_BASE_SLICE_NS=2000000
