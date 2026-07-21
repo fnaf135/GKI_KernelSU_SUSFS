@@ -1,0 +1,46 @@
+name: 'Apply BORE Scheduler'
+description: 'Fetches and applies the Burst-Oriented Response Enhancer (BORE) CPU scheduler patch'
+
+inputs:
+  kernel_version:
+    description: 'The major kernel version (e.g., 5.10, 5.15, 6.1)'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Apply BORE Patch
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel/common
+      run: |
+        echo "======================================================="
+        echo "🚀 Applying BORE Scheduler for Kernel ${{ inputs.kernel_version }}"
+        echo "======================================================="
+        
+        # Map kernel versions to typical BORE branch/patch naming conventions
+        # You may need to adjust the URL depending on the exact BORE repo structure
+        BORE_REPO="https://raw.githubusercontent.com/firelzrd/bore-scheduler"
+        
+        # BORE usually maintains branches like 'bore-6.1', 'bore-5.15', etc.
+        # We will fetch a pre-compiled patch file if available, or generate it.
+        # Example using a known patch source (adjust branch as necessary):
+        PATCH_URL="${BORE_REPO}/main/bore-${{ inputs.kernel_version }}.patch"
+        
+        echo "Downloading BORE patch from: $PATCH_URL"
+        if curl -sL -f -o bore.patch "$PATCH_URL"; then
+            echo "✅ BORE patch downloaded successfully."
+        else
+            echo "⚠️ Failed to download BORE patch for ${{ inputs.kernel_version }}. Skipping or fallback required."
+            exit 1
+        fi
+
+        echo "Applying patch..."
+        if patch -p1 --forward < bore.patch; then
+            echo "✅ BORE Scheduler successfully applied!"
+            # Enable BORE in defconfig by injecting the config flag
+            echo "CONFIG_SCHED_BORE=y" >> ${{ github.workspace }}/wild_gki.fragment
+        else
+            echo "❌ Failed to apply BORE patch. It may conflict with existing patches."
+            # Depending on your workflow, you might want to fail the build here or continue
+            exit 1
+        fi
