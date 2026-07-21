@@ -23,6 +23,28 @@ EXPORT_RE = re.compile(
     r"^\s*EXPORT_SYMBOL(?:_GPL)?\(\s*sysctl_sched_base_slice\s*\);\s*$"
 )
 
+# Match only a C variable definition, never a later assignment such as
+# ``sysctl_sched_base_slice = get_update_sysctl_factor() * ...``. Android
+# fair.c legitimately assigns these tunables several times while rescaling
+# scheduler values, so counting every ``name = value;`` line is incorrect.
+TYPE_RE = r"(?:unsigned\s+int|unsigned\s+long(?:\s+long)?|u(?:8|16|32|64))"
+QUALIFIER_RE = r"(?:static|const|volatile|const_debug|__read_mostly|__ro_after_init)"
+ATTRIBUTE_RE = r"__\w+(?:\([^;]*?\))?"
+
+
+def declaration_re(symbol: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"""^\s*
+        (?:{QUALIFIER_RE}\s+)*
+        {TYPE_RE}
+        (?:\s+{ATTRIBUTE_RE})*
+        \s+{re.escape(symbol)}\b
+        (?:\s+{ATTRIBUTE_RE})*
+        \s*=\s*[^;]+;\s*(?://.*)?$
+        """,
+        re.VERBOSE,
+    )
+
 
 def atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -40,21 +62,18 @@ def atomic_write(path: Path, text: str) -> None:
 
 
 def declaration_index(lines: list[str], symbol: str) -> int:
-    candidates: list[int] = []
-    token = re.compile(rf"\b{re.escape(symbol)}\b")
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if (
-            token.search(line)
-            and "=" in line
-            and stripped.endswith(";")
-            and not stripped.startswith("#")
-            and "(" not in line.split("=", 1)[0]
-        ):
-            candidates.append(index)
+    pattern = declaration_re(symbol)
+    candidates = [index for index, line in enumerate(lines) if pattern.match(line)]
     if len(candidates) != 1:
+        references = [
+            f"{index + 1}:{line.strip()}"
+            for index, line in enumerate(lines)
+            if re.search(rf"\b{re.escape(symbol)}\b", line)
+        ][:8]
+        detail = f" References: {' | '.join(references)}" if references else ""
         raise RuntimeError(
-            f"Expected exactly one declaration of {symbol}, found {len(candidates)}"
+            f"Expected exactly one typed declaration of {symbol}, "
+            f"found {len(candidates)}.{detail}"
         )
     return candidates[0]
 
@@ -127,13 +146,8 @@ def find_bore_declaration_block(lines: list[str]) -> tuple[int, int, int]:
 def replace_one_declaration(
     lines: list[str], start: int, end: int, symbol: str, replacement: str
 ) -> None:
-    matches = [
-        index
-        for index in range(start, end)
-        if re.search(rf"\b{re.escape(symbol)}\b", lines[index])
-        and "=" in lines[index]
-        and lines[index].strip().endswith(";")
-    ]
+    pattern = declaration_re(symbol)
+    matches = [index for index in range(start, end) if pattern.match(lines[index])]
     if len(matches) != 1:
         raise RuntimeError(
             f"Expected one {symbol} declaration in BORE #else branch, "
