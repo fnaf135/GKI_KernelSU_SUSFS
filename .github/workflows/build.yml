@@ -182,12 +182,6 @@ jobs:
         kernel_version: ${{ inputs.kernel_version }}
         sublevel: ${{ steps.extract.outputs.sublevel }}
 
-    - name: Apply BORE Scheduler Patches
-      if: contains(inputs.feature_set, 'BORE') || inputs.feature_set == 'FULL'
-      uses: ./.github/actions/bore
-      with:
-        kernel_version: ${{ inputs.kernel_version }}   
-
     - name: Apply Ptrace Patch
       uses: ./.github/actions/ptrace
       with:
@@ -203,6 +197,13 @@ jobs:
       if: false
       with:
         kernel_version: ${{ inputs.kernel_version }}
+
+    - name: Apply BORE Scheduler
+      if: contains(inputs.feature_set, 'BORE') || inputs.feature_set == 'FULL'
+      uses: ./.github/actions/bore-scheduler
+      with:
+        kernel_version: ${{ inputs.kernel_version }}
+        version: ${{ inputs.version }}
 
     - name: Setup Misc Configs
       uses: ./.github/actions/misc
@@ -436,13 +437,6 @@ jobs:
           echo "| **KSU Tag** | ${KSU_TAG} |"
           echo "| **SUSFS Version** | ${SUSFS_VER} |"
           echo "| **Feature Set** | ${{ inputs.feature_set }} |"
-          
-          if [[ "${{ inputs.feature_set }}" == *"BORE"* ]] || [[ "${{ inputs.feature_set }}" == "FULL" ]]; then
-            echo "| **BORE Scheduler** | ✅ Applied |"
-          else
-            echo "| **BORE Scheduler** | ❌ Skipped |"
-          fi
-          
           echo "| **Variant** | ${{ inputs.variant }} |"
           echo
           

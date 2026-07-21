@@ -1,0 +1,60 @@
+name: 'Apply BORE Scheduler'
+description: 'Download and apply the BORE scheduler patch, and enable its kernel config'
+inputs:
+  kernel_version:
+    description: 'Kernel version (e.g., 6.12)'
+    required: true
+  version:
+    description: 'Kernel config version (e.g., android16-6.12)'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Download and Apply BORE Patch
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel/common
+      run: |
+        set -euo pipefail
+        
+        # We only apply BORE for 6.12 kernel in this setup
+        if [[ "${{ inputs.kernel_version }}" != "6.12" ]]; then
+          echo "BORE scheduler patch is only configured for kernel 6.12 in this action. Skipping."
+          exit 0
+        fi
+        
+        PATCH_URL="https://raw.githubusercontent.com/firelzrd/bore-scheduler/main/patches/stable/linux-6.12-bore/0001-linux6.12.37-bore-6.6.3.patch"
+        PATCH_FILE="/tmp/bore-scheduler.patch"
+        
+        echo "Downloading BORE patch from $PATCH_URL"
+        
+        # Download with retries
+        ok=0
+        for attempt in 1 2 3 4 5; do
+          if curl -LfsS --connect-timeout 30 --max-time 120 "$PATCH_URL" -o "$PATCH_FILE" && [ -s "$PATCH_FILE" ]; then
+            ok=1
+            break
+          fi
+          echo "Attempt $attempt failed. Backing off..."
+          sleep $(( attempt * 5 ))
+        done
+        
+        if [ "$ok" -ne 1 ]; then
+          echo "::error::Failed to download BORE scheduler patch!"
+          exit 1
+        fi
+        
+        echo "Applying BORE patch..."
+        # Use -F3 to handle minor sublevel fuzz since the patch is against 6.12.37
+        patch -p1 -F3 --forward < "$PATCH_FILE" || {
+          echo "::warning::BORE patch applied with fuzz or had rejects. Check scan-patch-rejects step."
+        }
+        
+        echo "✅ BORE scheduler patch applied"
+
+    - name: Enable BORE Kernel Config
+      if: inputs.kernel_version == '6.12'
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_SCHED_BORE=y
