@@ -182,6 +182,12 @@ jobs:
         kernel_version: ${{ inputs.kernel_version }}
         sublevel: ${{ steps.extract.outputs.sublevel }}
 
+    - name: Apply BORE Scheduler Patches
+      if: contains(inputs.feature_set, 'BORE') || inputs.feature_set == 'FULL'
+      uses: ./.github/actions/bore
+      with:
+        kernel_version: ${{ inputs.kernel_version }}   
+
     - name: Apply Ptrace Patch
       uses: ./.github/actions/ptrace
       with:
