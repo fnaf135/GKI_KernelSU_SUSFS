@@ -1,64 +1,76 @@
-name: 'SUSFS Setup'
-description: 'Clones and prepares SUSFS patches for KernelSU'
+name: 'BORE Scheduler Setup'
+description: 'Downloads and applies the BORE CPU scheduler patch'
 
 inputs:
-  susfs_commit:
-    description: 'Specific SUSFS commit hash'
-    required: false
-    default: ''
-  version:
-    description: 'Build version string (e.g., android16-6.12)'
-    required: true
-  android_version:
-    description: 'Android version'
-    required: false
   kernel_version:
-    description: 'Kernel major version'
-    required: false
-  os_patch_level:
-    description: 'OS patch level'
-    required: false
-  sublevel:
-    description: 'Kernel sublevel'
-    required: false
+    description: 'Kernel major version (e.g. 6.12)'
+    required: true
 
 runs:
   using: 'composite'
   steps:
-    - name: Clone and Checkout SUSFS
+    - name: Apply BORE Patch
       shell: bash
       run: |
         set -euo pipefail
 
-        TARGET_BRANCH="gki-${{ inputs.version }}"
-        SUSFS_DIR="${{ github.workspace }}/susfs4ksu"
+        KVER="${{ inputs.kernel_version }}"
+        echo "======================================================="
+        echo "🚀 Applying BORE Scheduler for Kernel ${KVER}"
+        echo "======================================================="
 
-        echo "Preparing SUSFS for branch: ${TARGET_BRANCH}"
-
-        # Clean old directory if present
-        rm -rf "$SUSFS_DIR"
-
-        # Clone full repository history (avoid --depth 1 so commit hashes are accessible)
-        git clone https://gitlab.com/pershoot/susfs4ksu.git "$SUSFS_DIR"
-
-        cd "$SUSFS_DIR"
-
-        # 1. If a specific commit hash was provided, fetch and checkout that commit
-        if [ -n "${{ inputs.susfs_commit }}" ]; then
-          echo "Fetching and checking out specific commit: ${{ inputs.susfs_commit }}"
-          git fetch origin ${{ inputs.susfs_commit }} || true
-          git checkout ${{ inputs.susfs_commit }}
-
-        # 2. Otherwise try checking out the matching version branch
-        elif git rev-parse --verify "origin/${TARGET_BRANCH}" >/dev/null 2>&1; then
-          echo "Checking out matching branch: ${TARGET_BRANCH}"
-          git checkout "${TARGET_BRANCH}"
-
-        # 3. Fallback if the requested version branch doesn't exist on GitLab yet
+        # Locate kernel source root (Android GKI places kernel source in kernel/common or common)
+        if [ -d "${{ github.workspace }}/kernel/common" ]; then
+          KERNEL_DIR="${{ github.workspace }}/kernel/common"
+        elif [ -d "${{ github.workspace }}/common" ]; then
+          KERNEL_DIR="${{ github.workspace }}/common"
         else
-          echo "⚠️ Branch '${TARGET_BRANCH}' not found in remote repository."
-          echo "Falling back to master branch..."
-          git checkout master || git checkout main
+          KERNEL_DIR="${{ github.workspace }}"
         fi
 
-        echo "✅ SUSFS repo ready at commit: $(git rev-parse HEAD)"
+        echo "Kernel directory set to: ${KERNEL_DIR}"
+
+        PATCH_FILE="${{ github.workspace }}/bore-${KVER}.patch"
+        SUCCESS=0
+
+        # Remote patch sources
+        URLS=(
+          "https://raw.githubusercontent.com/CachyOS/kernel-patches/master/${KVER}/sched/0001-bore-cachy.patch"
+          "https://raw.githubusercontent.com/firelzrd/bore-scheduler/main/patches/stable/linux-${KVER}-bore/0001-linux${KVER}.y-bore.patch"
+          "https://raw.githubusercontent.com/firelzrd/bore-scheduler/main/patches/testing/linux-${KVER}-bore/0001-linux${KVER}.y-bore.patch"
+        )
+
+        for url in "${URLS[@]}"; do
+          echo "Attempting download from: $url"
+          if curl -sSL -f "$url" -o "$PATCH_FILE"; then
+            echo "✅ Successfully downloaded BORE patch from $url"
+            SUCCESS=1
+            break
+          fi
+        done
+
+        if [ $SUCCESS -ne 1 ]; then
+          if [ -f "${{ github.workspace }}/.github/patches/bore-${KVER}.patch" ]; then
+            echo "✅ Using local fallback patch"
+            cp "${{ github.workspace }}/.github/patches/bore-${KVER}.patch" "$PATCH_FILE"
+            SUCCESS=1
+          else
+            echo "❌ Error: Could not obtain BORE patch for kernel ${KVER}."
+            exit 1
+          fi
+        fi
+
+        # Change directory to the kernel source before applying
+        cd "$KERNEL_DIR"
+
+        echo "Applying BORE patch in ${KERNEL_DIR}..."
+        if patch -p1 --forward --batch --ignore-whitespace < "$PATCH_FILE"; then
+          echo "✅ BORE Scheduler patch applied successfully!"
+          # Inject config flag into build fragment if present
+          if [ -f "${{ github.workspace }}/wild_gki.fragment" ]; then
+            echo "CONFIG_SCHED_BORE=y" >> "${{ github.workspace }}/wild_gki.fragment"
+          fi
+        else
+          echo "❌ Failed to apply BORE patch."
+          exit 1
+        fi
