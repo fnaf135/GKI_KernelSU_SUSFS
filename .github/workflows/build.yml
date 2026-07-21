@@ -436,6 +436,13 @@ jobs:
           echo "| **KSU Tag** | ${KSU_TAG} |"
           echo "| **SUSFS Version** | ${SUSFS_VER} |"
           echo "| **Feature Set** | ${{ inputs.feature_set }} |"
+          
+          if [[ "${{ inputs.feature_set }}" == *"BORE"* ]] || [[ "${{ inputs.feature_set }}" == "FULL" ]]; then
+            echo "| **BORE Scheduler** | ✅ Applied |"
+          else
+            echo "| **BORE Scheduler** | ❌ Skipped |"
+          fi
+          
           echo "| **Variant** | ${{ inputs.variant }} |"
           echo
           
