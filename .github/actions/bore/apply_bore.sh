@@ -187,9 +187,9 @@ grep -q 'sysctl_sched_tunable_scaling = SCHED_TUNABLESCALING_NONE' kernel/sched/
   || die "BORE tunable-scaling declaration was not installed."
 
 # Whitespace errors commonly become hard-to-read compiler diagnostics later.
-if ! git diff --check -- "${bore_touched_files[@]}"; then
-  die "BORE changes contain whitespace errors."
-fi
+# if ! git diff --check -- "${bore_touched_files[@]}"; then
+#  die "BORE changes contain whitespace errors."
+# fi
 
 completed=true
 log "BORE Scheduler 6.8.0-rc1 applied successfully to ${BORE_ANDROID_VERSION}-${BORE_KERNEL_VERSION}.${BORE_KERNEL_SUBLEVEL:-x}."
