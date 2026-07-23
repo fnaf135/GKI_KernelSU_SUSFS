@@ -52,17 +52,22 @@ jobs:
 
       - name: Prepare kernel source (fetch or use repo script)
         run: |
-          set -e
-          # If your repo has a fetch script, use it. Adjust if your script name differs.
-          if [ -x ./scripts/fetch_kernel.sh ]; then
-            ./scripts/fetch_kernel.sh "$KERNEL_VERSION"
-          else
-            # fallback: download kernel tarball and extract
-            mkdir -p kernel-src
-            wget -q -O linux.tar.xz "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz"
-            tar -xf linux.tar.xz -C kernel-src
-            mv kernel-src/linux-${KERNEL_VERSION} linux-${KERNEL_VERSION}
-          fi
+                set -e
+                if [ -x ./scripts/fetch_kernel.sh ]; then
+                  ./scripts/fetch_kernel.sh "$KERNEL_VERSION"
+                else
+                  TMPDIR=kernel-src
+                  mkdir -p "$TMPDIR"
+                  wget -q -O linux.tar.xz "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz"
+                  tar -xf linux.tar.xz -C "$TMPDIR"
+                  if [ -d "${TMPDIR}/linux-${KERNEL_VERSION}" ] && [ ! -d "linux-${KERNEL_VERSION}" ]; then
+                    mv "${TMPDIR}/linux-${KERNEL_VERSION}" .
+                  elif [ -d "linux-${KERNEL_VERSION}" ]; then
+                    echo "linux-${KERNEL_VERSION} already exists in repo root; skipping move"
+                  else
+                    tar -xf linux.tar.xz
+                  fi
+                fi
 
       - name: Apply repo patches (if any)
         run: |
