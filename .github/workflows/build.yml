@@ -339,6 +339,20 @@ jobs:
     - name: Initialize Config Fragment
       run: touch "${{ github.workspace }}/wild_gki.fragment"
 
+    - name: Apply BORE Scheduler Patch
+      if: contains(inputs.version, '6.12')
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel/common
+      run: |
+        echo "--- Downloading BORE patch for Linux 6.12 ---"
+        wget -q https://raw.githubusercontent.com/firelzrd/bore-scheduler/main/bore-6.12.patch -O bore.patch
+        
+        echo "--- Applying BORE patch ---"
+        patch -p1 --no-backup-if-mismatch < bore.patch
+        
+        echo "--- Enabling BORE in Config Fragment ---"
+        echo "CONFIG_SCHED_BORE=y" >> "${{ github.workspace }}/wild_gki.fragment"
+
     - name: Build Normal Kernel
       env:
         SOURCE_DATE_EPOCH: ${{ env.SOURCE_DATE_EPOCH }}
