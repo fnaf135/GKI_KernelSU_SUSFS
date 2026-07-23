@@ -1,0 +1,158 @@
+name: Build kernel and publish via BORE
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      kernel:
+        description: 'Kernel version to build (e.g. 6.12.30)'
+        required: true
+        default: '6.12.30'
+      arch:
+        description: 'Target architecture (e.g. arm64)'
+        required: false
+        default: 'arm64'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    env:
+      KERNEL_VERSION: ${{ github.event.inputs.kernel || github.event.head_commit.message || '6.12.30' }}
+      ARCH: ${{ github.event.inputs.arch || 'arm64' }}
+      OUT_DIR: build-output
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev dwarves rsync wget python3-pip
+          pip3 install --user kconfiglib
+
+      - name: Setup Go (for bore)
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21' 
+
+      - name: Install bore
+        run: |
+          export PATH=$PATH:$(go env GOPATH)/bin
+          go install github.com/evanw/bore@latest
+          echo "bore installed to $(go env GOPATH)/bin"
+
+      - name: Prepare kernel source (fetch or use repo script)
+        run: |
+                set -e
+                if [ -x ./scripts/fetch_kernel.sh ]; then
+                  ./scripts/fetch_kernel.sh "$KERNEL_VERSION"
+                else
+                  TMPDIR=kernel-src
+                  mkdir -p "$TMPDIR"
+                  wget -q -O linux.tar.xz "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz"
+                  tar -xf linux.tar.xz -C "$TMPDIR"
+                  if [ -d "${TMPDIR}/linux-${KERNEL_VERSION}" ] && [ ! -d "linux-${KERNEL_VERSION}" ]; then
+                    mv "${TMPDIR}/linux-${KERNEL_VERSION}" .
+                  elif [ -d "linux-${KERNEL_VERSION}" ]; then
+                    echo "linux-${KERNEL_VERSION} already exists in repo root; skipping move"
+                  else
+                    tar -xf linux.tar.xz
+                  fi
+                fi
+
+      - name: Apply repo patches (if any)
+        run: |
+          set -e
+          if [ -x ./scripts/apply_patches.sh ]; then
+            ./scripts/apply_patches.sh "$KERNEL_VERSION"
+          else
+            echo "No apply_patches.sh found; skipping patch step"
+          fi
+
+      - name: Configure and build kernel
+        run: |
+          set -e
+          export KBUILD_OUTPUT=${GITHUB_WORKSPACE}/${OUT_DIR}
+          mkdir -p "$KBUILD_OUTPUT"
+          # If repo provides a build wrapper, use it. Otherwise run a generic build.
+          if [ -x ./build.sh ]; then
+            ./build.sh --kernel "$KERNEL_VERSION" --arch "$ARCH" --output "$KBUILD_OUTPUT"
+          else
+            # Generic kernel build: adjust ARCH/CROSS_COMPILE as needed
+            cd linux-${KERNEL_VERSION}
+            if [ -f ../configs/gki_defconfig ]; then
+              cp ../configs/gki_defconfig .config
+              make O="$KBUILD_OUTPUT" ARCH="$ARCH" olddefconfig
+            else
+              make O="$KBUILD_OUTPUT" ARCH="$ARCH" defconfig
+            fi
+            make -j$(nproc) O="$KBUILD_OUTPUT" ARCH="$ARCH"
+            cd -
+          fi
+
+      - name: Collect artifacts
+        run: |
+          set -e
+          mkdir -p artifacts
+          # common artifact locations; adjust if your repo uses different paths
+          if [ -d "${OUT_DIR}/arch/${ARCH}/boot" ]; then
+            cp -a ${OUT_DIR}/arch/${ARCH}/boot/* artifacts/ || true
+          fi
+          # copy modules and dtbs if present
+          cp -a ${OUT_DIR}/lib/modules artifacts/ || true
+          cp -a ${OUT_DIR}/arch/${ARCH}/boot/dts artifacts/ || true
+          tar -czf artifacts.tar.gz artifacts
+
+      - name: Upload build artifact (GitHub)
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-artifacts-${{ env.KERNEL_VERSION }}
+          path: artifacts.tar.gz
+
+      - name: Start local HTTP server for artifacts
+        run: |
+          set -e
+          # serve artifacts on port 8080
+          mkdir -p public
+          cp artifacts.tar.gz public/
+          nohup python3 -m http.server 8080 --directory public > http-server.log 2>&1 &
+          sleep 1
+          echo "HTTP server started on port 8080"
+
+      - name: Expose artifacts via bore
+        env:
+          BORE_HOST: ${{ secrets.BORE_HOST }}
+          BORE_TOKEN: ${{ secrets.BORE_TOKEN }}
+        run: |
+          set -e
+          export PATH=$PATH:$(go env GOPATH)/bin
+          # If your bore server requires a token or host, pass them. Adjust command to match your bore deployment.
+          # This example uses a public tunnel and prints the public URL to the log.
+          if [ -n "$BORE_TOKEN" ]; then
+            nohup bore http 8080 --to "$BORE_HOST" --token "$BORE_TOKEN" > bore.log 2>&1 &
+          elif [ -n "$BORE_HOST" ]; then
+            nohup bore http 8080 --to "$BORE_HOST" > bore.log 2>&1 &
+          else
+            nohup bore http 8080 > bore.log 2>&1 &
+          fi
+          sleep 3
+          echo "bore started; logs:"
+          tail -n +1 bore.log || true
+          echo "If bore prints a public URL, use it to download artifacts (artifacts.tar.gz)."
+
+      - name: Show quick debug info
+        run: |
+          echo "Artifacts saved to artifacts.tar.gz"
+          echo "HTTP server logs (last 50 lines):"
+          tail -n 50 http-server.log || true
+          echo "bore logs (last 50 lines):"
+          tail -n 50 bore.log || true
