@@ -1,0 +1,71 @@
+name: PR Build (validate)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-build:
+    runs-on: ubuntu-latest
+    env:
+      KERNEL_VERSION: '6.12.30'
+      ARCH: 'arm64'
+      OUT_DIR: build-output
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev dwarves rsync wget python3-pip
+          pip3 install --user kconfiglib
+
+      - name: Prepare kernel source
+        run: |
+          set -e
+          if [ -x ./scripts/fetch_kernel.sh ]; then
+            ./scripts/fetch_kernel.sh "$KERNEL_VERSION"
+          else
+            wget -q -O linux.tar.xz "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz"
+            tar -xf linux.tar.xz
+            mv linux-${KERNEL_VERSION} linux-${KERNEL_VERSION}
+          fi
+
+      - name: Apply patches (if present)
+        run: |
+          set -e
+          if [ -x ./scripts/apply_patches.sh ]; then
+            ./scripts/apply_patches.sh "$KERNEL_VERSION"
+          else
+            echo "No patch script; skipping"
+          fi
+
+      - name: Quick build (config + compile small target)
+        run: |
+          set -e
+          export KBUILD_OUTPUT=${GITHUB_WORKSPACE}/${OUT_DIR}
+          mkdir -p "$KBUILD_OUTPUT"
+          cd linux-${KERNEL_VERSION}
+          if [ -f ../configs/gki_defconfig ]; then
+            cp ../configs/gki_defconfig .config
+            make O="$KBUILD_OUTPUT" ARCH="$ARCH" olddefconfig
+          else
+            make O="$KBUILD_OUTPUT" ARCH="$ARCH" defconfig
+          fi
+          # Build a small target to validate compile pipeline
+          make -j2 O="$KBUILD_OUTPUT" ARCH="$ARCH" vmlinux || true
+          cd -
+
+      - name: Upload PR artifact (logs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-build-logs
+          path: |
+            build-output/
+            linux-${KERNEL_VERSION}/.config
