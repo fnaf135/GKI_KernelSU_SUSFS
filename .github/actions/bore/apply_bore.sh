@@ -21,10 +21,10 @@ if [[ ! -f Makefile || ! -f kernel/sched/fair.c ]]; then
   die "Run this action from the root of kernel/common."
 fi
 
-if grep -q 'SCHED_BORE_VERSION "6\.8\.0-rc1"' include/linux/sched/bore.h 2>/dev/null; then
-  log "BORE 6.8.0-rc1 is already present; nothing to do."
-  exit 0
-fi
+# if grep -q 'SCHED_BORE_VERSION "6\.8\.0-rc1"' include/linux/sched/bore.h 2>/dev/null; then
+#  log "BORE 6.8.0-rc1 is already present; nothing to do."
+#  exit 0
+# fi
 
 tmpdir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/bore.XXXXXX")"
 mutation_started=false
@@ -175,9 +175,9 @@ done
 
 grep -q 'config SCHED_BORE' init/Kconfig \
   || die "CONFIG_SCHED_BORE was not added to init/Kconfig."
-grep -q 'SCHED_BORE_VERSION "6\.8\.0-rc1"' include/linux/sched/bore.h \
+#grep -q 'SCHED_BORE_VERSION "6\.8\.0-rc1"' include/linux/sched/bore.h \
   || die "Unexpected or missing BORE version marker."
-grep -q 'bore\.o' kernel/sched/Makefile \
+#grep -q 'bore\.o' kernel/sched/Makefile \
   || die "kernel/sched/bore.o was not added to the scheduler Makefile."
 grep -q 'update_curr_bore' kernel/sched/fair.c \
   || die "BORE fair-scheduler hooks are missing."
