@@ -176,8 +176,8 @@ done
 grep -q 'config SCHED_BORE' init/Kconfig \
   || die "CONFIG_SCHED_BORE was not added to init/Kconfig."
 #grep -q 'SCHED_BORE_VERSION "6\.8\.0-rc1"' include/linux/sched/bore.h \
-  || die "Unexpected or missing BORE version marker."
-#grep -q 'bore\.o' kernel/sched/Makefile \
+#  || die "Unexpected or missing BORE version marker."
+grep -q 'bore\.o' kernel/sched/Makefile \
   || die "kernel/sched/bore.o was not added to the scheduler Makefile."
 grep -q 'update_curr_bore' kernel/sched/fair.c \
   || die "BORE fair-scheduler hooks are missing."
