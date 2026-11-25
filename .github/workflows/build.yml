@@ -175,6 +175,21 @@ jobs:
 
       - name: Initialize Config Fragment
         uses: ./.github/actions/initialize-config-fragment
+      
+      - name: Enable 1000Hz Timer Frequency
+        if: inputs.version == 'android16-6.12'
+        shell: bash
+        working-directory: ${{ github.workspace }}/kernel/common
+        run: |
+          set -euo pipefail
+
+          echo "Enabling 1000Hz..."
+
+          python3 "$GITHUB_WORKSPACE/.github/scripts/append_fragment.py" \
+            "$GITHUB_WORKSPACE/.github/fragments/hz-1000.fragment" \
+            --dest wild_defconfig.fragment \
+            --label hz-1000
+
       - name: Spoof /proc/config.gz With Stock Config
         uses: ./.github/actions/stock-config
         with:
